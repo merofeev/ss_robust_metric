@@ -2,9 +2,7 @@ function [ ss,per_frame_ss ] = ss_robust_metric(src_avi, gt_avi,sampling_density
 
     cur     = VideoReader(src_avi);
     ref     = VideoReader(gt_avi);
-    
-    
-    center_prior = get_center_prior(gt_avi,ref,sampling_density,optimization_iterations);
+
     
     if( ~exist('sampling_density', 'var' ) )
         sampling_density = 400;
@@ -13,6 +11,9 @@ function [ ss,per_frame_ss ] = ss_robust_metric(src_avi, gt_avi,sampling_density
     if( ~exist('optimization_iterations', 'var' ) )
         optimization_iterations = 100;
     end
+        
+    
+    center_prior = get_center_prior(gt_avi,ref,sampling_density,optimization_iterations);
     
     fprintf('==Sampling every %d-th frame to choose best settings==\n', sampling_density);
     samples = sample(cur, ref, sampling_density);
@@ -22,7 +23,7 @@ function [ ss,per_frame_ss ] = ss_robust_metric(src_avi, gt_avi,sampling_density
     min_fval = +Inf;
     
     for i = 1:optimization_iterations
-        fprintf('Optimizing energy %d / %d',i,optimization_iterations);
+        fprintf('Optimizing energy %d / %d\n',i,optimization_iterations);
         [x,fval] = opt(samples);
         if(fval < min_fval)
             min_fval = fval;
@@ -34,12 +35,15 @@ function [ ss,per_frame_ss ] = ss_robust_metric(src_avi, gt_avi,sampling_density
     fn = min(cur.NumberOfFrames, ref.NumberOfFrames);
 
     per_frame_ss = zeros(fn, 1);
-
+    fprintf('==Computing final metric value==\n');
     for i = 1 : fn
         d.cur = applyt(xrgb2gray(im2double(read(cur, i))), best_x,center_prior);
         d.ref = xrgb2gray(im2double(read(ref,i)));
 
         per_frame_ss(i) = sum(min( d.cur(:) / sum(d.cur(:)), d.ref(:) / sum(d.ref(:)) ));
+        if( mod(i,20) == 0)
+            fprintf('%d / %d\n',i,fn);
+        end
     end
 
     ss = sum( per_frame_ss(isfinite(per_frame_ss))) / size(per_frame_ss(:), 1);
@@ -78,8 +82,14 @@ function [r] = levels(A, x)
 end
 
 function [data] = sample(cur, ref, step)
-  
-    fn = min(ref.NumberOfFrames, cur.NumberOfFrames);
+    fn = +Inf;
+    if(~isempty(ref))
+        fn = min(fn, ref.NumberOfFrames);
+    end
+    if(~isempty(cur))
+        fn = min(fn, cur.NumberOfFrames);
+    end    
+
     for i = 1:step:fn
        if(~isempty(ref))
         data.ref(:, :, floor((i - 1) / step) + 1) = xrgb2gray(im2double(read(ref, i)));
@@ -144,7 +154,7 @@ function cp = get_center_prior(gt_path,gt,sampling_density,optimization_iteratio
         GY =  exp(-yy.^2 / (2*sigmaY^2));
         cp = GY' * GX;
         
-        fprintf('Sampling ground-truth sequence');
+        fprintf('Sampling ground-truth sequence\n');
         samples = sample([],gt,sampling_density);
         
         samples.cur = repmat(cp,[1 1 size(samples.ref,3) ] );
@@ -153,8 +163,8 @@ function cp = get_center_prior(gt_path,gt,sampling_density,optimization_iteratio
         min_fval = +Inf;
     
         for i = 1:optimization_iterations
-            fprintf('Optimizing energy %d / %d',i,optimization_iterations);
-            [x,fval] = opt(samples);
+            fprintf('Optimizing energy %d / %d\n',i,optimization_iterations);
+            [x,fval] = opt(samples,true);
             if(fval < min_fval)
                 min_fval = fval;
                 best_x = x;
