@@ -8,13 +8,13 @@ sequence using the method described in "Objective evaluation" section of
 > Its Application to Video Compression". 2014 IEEE International Conference on Image Processing (ICIP). 
 > Paris, France, pp. 1105-1109.
 
-The comparison carried out by the function is almost robust to all common transformation, thus it allows to carry out
+The comparison carried out by the function is almost invariant to all common transformation, thus it allows to carry out
 fare comparisons of saliency models.
 
 Features
 ---------
 
- - Robustness to
+ - Metric is invariant to
    - Black and white level corrections
    - Gamma correction
    - Mixing method with Center Prior 
