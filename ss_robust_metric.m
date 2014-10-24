@@ -1,71 +1,52 @@
-function [  ] = compare_all(inpd, vss)
-
-	%resfile = strcat(inpd, resfile);
-
-    for test = 1:length(vss)
-        gt_p  = sprintf('%s/%s.avi', inpd, vss{test}{2});
-        cur_p = sprintf('%s/%s.avi', inpd, vss{test}{1});
-        circles_p = sprintf('%s/circles_%s.avs/circles_%s.avi', inpd, vss{test}{2}, vss{test}{2});
-
-        if( ~exist(gt_p,'file') || ~exist(cur_p,'file') )
-            fprintf('%s vs %s Not found\r\n',  vss{test}{1},  vss{test}{2});
-        else
-            [psnr ss AUC]= compare_v(cur_p, gt_p, circles_p, vss{test}{3}, vss{test}{4});
-%             fp = fopen(resfile,'a');
-%                 fprintf(fp,'%f %f %f\n', psnr, ss, AUC);
-%             fclose(fp);
-        end
-    end
-end
-
-function [psnr, ss, AUC] = compare_v(src_avi, gt_avi, circles_avi, resfile, x)
+function [ ss,per_frame_ss ] = ss_robust_metric(src_avi, gt_avi,sampling_density,optimization_iterations)
 
     cur     = VideoReader(src_avi);
     ref     = VideoReader(gt_avi);
-    if~strcmp(circles_avi, '')
-        circles = VideoReader(circles_avi);
+    
+    
+    center_prior = get_center_prior(gt_avi,ref,sampling_density,optimization_iterations);
+    
+    if( ~exist('sampling_density', 'var' ) )
+        sampling_density = 400;
     end
     
-	if (isempty(x))
-		x = opt(sample(cur, ref, 400), resfile);
-	end
+    if( ~exist('optimization_iterations', 'var' ) )
+        optimization_iterations = 100;
+    end
+    
+    fprintf('==Sampling every %d-th frame to choose best settings==\n', sampling_density);
+    samples = sample(cur, ref, sampling_density);
+    samples.center_prior = center_prior;
+    fprintf('==Searching for best parameters==\n');
+    
+    min_fval = +Inf;
+    
+    for i = 1:optimization_iterations
+        fprintf('Optimizing energy %d / %d',i,optimization_iterations);
+        [x,fval] = opt(samples);
+        if(fval < min_fval)
+            min_fval = fval;
+            best_x = x;
+        end
+    end
+
 	
     fn = min(cur.NumberOfFrames, ref.NumberOfFrames);
 
-    psnr = zeros(fn, 1);
-    ss   = zeros(fn, 1);
-    AUC  = zeros(fn, 1); 
+    per_frame_ss = zeros(fn, 1);
 
     for i = 1 : fn
-        d.cur     = applyt(xrgb2gray(im2double(read(cur, i))), x);
-        d.ref     = xrgb2gray(im2double(read(ref,i)));
-    
-        if ~strcmp(circles_avi, '')
-            d.circles = xrgb2gray(im2double(read(circles,i)));
-            [AUC(i), ~] = sm_roc(d.cur, d.circles);
-        end
-         
-        ssd         = mean( (d.ref(:) - d.cur(:)).^2 );
-        psnr(i)     = 10*log(1/(ssd)) / log(10);
-        ss(i)       = sum(min( d.cur(:) / sum(d.cur(:)), d.ref(:) / sum(d.ref(:)) ));
+        d.cur = applyt(xrgb2gray(im2double(read(cur, i))), best_x,center_prior);
+        d.ref = xrgb2gray(im2double(read(ref,i)));
 
-        xlog = fopen(resfile, 'a');	
-        fprintf(xlog, '%d / %d psnr = %f ss = %f AUC = %f\n', i, fn, psnr(i), ss(i), AUC(i));
-        fclose(xlog);
+        per_frame_ss(i) = sum(min( d.cur(:) / sum(d.cur(:)), d.ref(:) / sum(d.ref(:)) ));
     end
 
-    psnr = (sum(psnr(isfinite(psnr))) + 100.0 * sum(isinf(psnr))) / size(psnr(:), 1);
-    ss   = sum(ss(isfinite(ss))) / size(ss(:), 1);
-    AUC  = mean(AUC(isfinite(AUC)));
-
-    xlog = fopen(resfile, 'a');
-    fprintf (xlog, '---------------FINAL---------------\n');
-    fprintf (xlog, 'psnr = %f ss = %f AUC = %f\n\n\n', psnr, ss, AUC);
-    fclose(xlog);
+    ss = sum( per_frame_ss(isfinite(per_frame_ss))) / size(per_frame_ss(:), 1);
 end
 
 function [res] = gt_dif(x, d)
-    r = applyt(d.cur, x);
+    r = applyt(d.cur, x,d.center_prior);
     %res = mean( (d.ref(:)-r(:)).^2 );
 	
 	nr = reshape(r(:), size(r,2)*size(r,1), size(r,3));
@@ -76,24 +57,13 @@ function [res] = gt_dif(x, d)
 	nd = nd ./ repmat(sum(nd, 1), [size(nd, 1), 1]);
 	nd(isnan(nd)) = 0;
     
-	res = 100  - mean(sum(min(nd, nr), 1));	
+	res = - mean(sum(min(nd, nr), 1));	
 end
 
-function [r] = applyt(A, x)
-    global ABSFDefault;
-    if (sum(size(ABSFDefault) == [1080 1920]) ~= 2)
-       xx  = -1920/2:1920/2 - 1; sigmaX = 1920/7;
-       yy  = -1080/2:1080/2 - 1; sigmaY = 1080/7;
-       GX =  exp(-xx.^2 / (2*sigmaX^2));
-       GY =  exp(-yy.^2 / (2*sigmaY^2));
-       ABSFDefault = GY' * GX;
-       
-       ABSFDefault = levels(ABSFDefault, [0.0011 0.9974 0.00 1 0.8598]);
-    end
-
+function [r] = applyt(A, x,center_prior)
     r = levels(A, x(2:6));
     
-    r = r * (1.0 - x(1)) + repmat(ABSFDefault, [1 1 size(r,3)]) * x(1);    
+    r = r * (1.0 - x(1)) + repmat(center_prior, [1 1 size(r,3)]) * x(1);    
 end
 
 function [r] = levels(A, x)
@@ -111,75 +81,86 @@ function [data] = sample(cur, ref, step)
   
     fn = min(ref.NumberOfFrames, cur.NumberOfFrames);
     for i = 1:step:fn
-       data.ref(:, :, floor((i - 1) / step) + 1) = xrgb2gray(im2double(read(ref, i)));
-       data.cur(:, :, floor((i - 1) / step) + 1) = xrgb2gray(im2double(read(cur, i)));
-       
+       if(~isempty(ref))
+        data.ref(:, :, floor((i - 1) / step) + 1) = xrgb2gray(im2double(read(ref, i)));
+       end
+       if(~isempty(cur))
+        data.cur(:, :, floor((i - 1) / step) + 1) = xrgb2gray(im2double(read(cur, i)));  
+       end
        fprintf('sampling %d / %d\n', i, fn);
     end
     
 end
 
-function [ x ] = opt(data, resfile)
+function [ x,fval ] = opt(data,nocp)
 
-    x0 = [0.5  0.0  0.5  0.0  0.5  1.0];
     lb = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     ub = [1.0, 1.0, 1.0, 1.0, 1.0, 5.0];
+    if(exist('nocp','var'))
+        if(nocp)
+            ub(1)=0;
+        end
+    end
+    
+    x0 = rand(1,6) .* (ub-lb) + lb;
 
     opt = optimset('Display', 'iter', 'UseParallel', 'always');
-    x = fmincon(@gt_dif, x0, [], [], [], [], lb, ub, [], opt, data);
-    xlog = fopen(resfile, 'a');
-    fprintf(xlog, strcat('CP=%.2f  IB=%.2f  IW=%.2f  OB=%.2f  OW=%.2f  AL=%.2f\n',...
-                         '....................................................\n'),...
-            x(1), x(2), x(3), x(4), x(5), x(6));
-    fclose(xlog);
+    [x,fval] = fmincon(@gt_dif, x0, [], [], [], [], lb, ub, [], opt, data);
 end
-
-function [area, roc] = sm_roc(cur, ref)
-    cur = cur(:);
-    ref = ref(:);
-    
-	ref = ref > 0;
-	roc = zeros(255,2);
-	
-	n = 255;
-	st = 1;
-
-	all_p = sum(ref(:));
-	all_n = length(ref(:)) - all_p;
-
-	p_i = ref(:) == true;
-	%n_i = find( ref(:) == false);
-    rng = (0:(n)) / n; 
-    c_h =   flipdim(    cumsum( flipdim(   histc( cur , rng )       ,1    ) )   ,1);
-    c_h_p = flipdim(    cumsum( flipdim(   histc( cur(p_i) , rng )  ,1    ) )   ,1);
-    
-    
-
-	for thr = 1:n+1	
-		true_p = c_h_p(thr);
-		%false_p = sum( bin(n_i) );
-		false_p = c_h(thr) - true_p;
-		%false_n = sum( ~bin(:) & ref(:) );
-		%true_n = length(bin(:)) - true_p - false_p - false_n;
-		
-		tpr = true_p / (all_p);
-		fpr = false_p / (all_n);
-		
-		roc(st, 2) = tpr;
-		roc(st, 1) = fpr;
-		st = st + 1;
-	end
-	roc  = sortrows(roc,1);
-    %plot(roc(:,1),roc(:,2));
-	area =   trapz(roc(:,1),roc(:,2));
-
-end
-
 
 function res = xrgb2gray(img)
-    if ((sum(size(size(img))) == 4) & size(img,3) == 3)
+    if ((sum(size(size(img))) == 4) && size(img,3) == 3)
         res = rgb2gray(img);
     else
         res = img;
+    end
+end
+
+
+function cp = get_center_prior(gt_path,gt,sampling_density,optimization_iterations)
+    cp_path = [gt_path , '_cp.png'];
+    
+    generate = true;
+    if( exist(cp_path,'file') )
+       cp_info = dir(cp_path);
+       gt_info = dir(gt_path);
+       
+       if(cp_info.date > gt_info.date)
+           generate = false;
+       end
+    end
+    
+    
+    if(~generate)
+        fprintf('Using precomputed center prior model\n');
+        cp = imread(cp_path);
+        cp = im2double(cp(:,:,1));
+    else
+        fprintf('Searching for the best center prior model\n');
+        xx  = -gt.Width/2:gt.Width/2 - 1; sigmaX = gt.Width/7;
+        yy  = -gt.Height/2:gt.Height/2 - 1; sigmaY = gt.Height/7;
+       
+        GX =  exp(-xx.^2 / (2*sigmaX^2));
+        GY =  exp(-yy.^2 / (2*sigmaY^2));
+        cp = GY' * GX;
+        
+        fprintf('Sampling ground-truth sequence');
+        samples = sample([],gt,sampling_density);
+        
+        samples.cur = repmat(cp,[1 1 size(samples.ref,3) ] );
+        samples.center_prior = cp;
+        
+        min_fval = +Inf;
+    
+        for i = 1:optimization_iterations
+            fprintf('Optimizing energy %d / %d',i,optimization_iterations);
+            [x,fval] = opt(samples);
+            if(fval < min_fval)
+                min_fval = fval;
+                best_x = x;
+            end
+        end
+        cp = applyt(cp,best_x,cp);
+        imwrite(cp,cp_path);
     end
 end
