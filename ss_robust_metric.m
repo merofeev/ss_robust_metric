@@ -135,7 +135,7 @@ function cp = get_center_prior(gt_path,gt,sampling_density,optimization_iteratio
        cp_info = dir(cp_path);
        gt_info = dir(gt_path);
        
-       if(cp_info.date > gt_info.date)
+       if(cp_info.datenum > gt_info.datenum)
            generate = false;
        end
     end
