@@ -35,18 +35,18 @@ Input arguments:
    to more precise results but increases computation time
 
 Output arguments:
- - ss - final metric value. Higher metric values stand for higher correlation with ground-truth
- - per_frame_ss - vector of per-frame metric values
+ - `ss - final` metric value. Higher metric values stand for higher correlation with ground-truth
+ - `per_frame_ss` - vector of per-frame metric values
 
 > NOTE 1: First run of the the function with new ground-truth sequence takes longer than subsequent runs. On the first run method
-> selects centre prior model for the ground-truth video. The selected ground-truth model will be cached for future used in *_cp.png
+> selects centre prior model for the ground-truth video. The selected ground-truth model will be cached for future used in `*_cp.png`
 > file
 >
 > NOTE 2: The method works really slow (it is the cost of its robustness), please, be patient
 
 Usage example
 ------------
-File example.m contains usage example. It performs comparison of two saliency sequences and visualizes its results.
+File `example.m` contains usage example. It performs comparison of two saliency sequences and visualizes its results.
 
 
 Misc
